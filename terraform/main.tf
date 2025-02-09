@@ -226,7 +226,7 @@ resource "aws_ecr_repository" "app_repo" {
 }
 # EC2 instance configuration
 resource "aws_instance" "ubuntu_instance" {
-  ami           = "ami-0e8d228ad90af673b"
+  ami           = "ami-04b4f1a9cf54c11d0"
   instance_type = "t2.micro"
   subnet_id     = aws_subnet.main[0].id  # Subnets
   
