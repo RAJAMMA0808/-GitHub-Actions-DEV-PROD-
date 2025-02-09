@@ -1,5 +1,5 @@
 provider "aws" {
-  region = "eu-west-2"
+  region = "eu-west-1"
 }
 
 # Select the workspace (dev, prod, stage)
@@ -26,9 +26,9 @@ resource "aws_s3_bucket" "terraform_state_bucket" {
 
 terraform {
   backend "s3" {
-    bucket = "gab-terraform-state-bucket-dev"  ## actual bucket name
+    bucket = "gab-terraform-state-bucket-dev1"  ## actual bucket name
     key    = "terraform/state/default.tfstate"
-    region = "eu-west-2"
+    region = "eu-west-1"
   }
 }
 
