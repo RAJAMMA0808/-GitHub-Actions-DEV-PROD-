@@ -28,20 +28,24 @@ jobs:
           python -m venv venv
           venv/bin/pip install -r requirements.txt
           venv/bin/pip install pytest flake8 bandit safety
-          venv/bin/pip install --upgrade jinja2
-
+          pip install --upgrade jinja2
       - name: Run Unit Tests
-        run: venv/bin/python -m pytest
-
+        run: |
+          venv/bin/python -m pytest
       - name: Lint Test with Flake8
-        run: venv/bin/python -m flake8 . --exclude=venv
-
+        run: |
+          venv/bin/python -m flake8 . --exclude=venv
+      # Security Check - Static Code Analysis  
       - name: Run Bandit Security Check
-        run: venv/bin/bandit -r . --exclude venv || true
-
+        run: |
+          source venv/bin/activate
+          bandit -r . --exclude venv || true
+      
+      # Security Check - Dependency Vulnerability Scanning (ignore jinja vuln)
       - name: Run Safety Check for Vulnerabilities
-        run: venv/bin/safety check --ignore=70612 
-
+        run: |
+          source venv/bin/activate
+          safety check --ignore=70612 
   build_and_push_docker_image:
     needs: build_and_test
     runs-on: ubuntu-latest
@@ -64,40 +68,36 @@ jobs:
       - name: Set environment variables based on branch
         run: |
           if [ "${{ github.ref }}" == "refs/heads/main" ]; then
-            echo "ECR_REPOSITORY=${{ secrets.ECR_REPOSITORY_PROD }}" >> $GITHUB_ENV
-            echo "ENVIRONMENT=prod" >> $GITHUB_ENV
+            echo "ECR_REPOSITORY=${{ secrets.ECR_REPOSITORY_PROD }}" | tee -a $GITHUB_ENV
+            echo "ENVIRONMENT=prod" | tee -a $GITHUB_ENV
           else
-            echo "ECR_REPOSITORY=${{ secrets.ECR_REPOSITORY_DEV }}" >> $GITHUB_ENV
-            echo "ENVIRONMENT=dev" >> $GITHUB_ENV
+            echo "ECR_REPOSITORY=${{ secrets.ECR_REPOSITORY_DEV }}" | tee -a $GITHUB_ENV
+            echo "ENVIRONMENT=dev" | tee -a $GITHUB_ENV
           fi
-
+      - name: Debug Environment Variables
+        run: |
+          echo "ECR_REPOSITORY=${{ env.ECR_REPOSITORY }}"
+      
       - name: Validate Environment Variables
         run: |
           if [ -z "${{ env.ECR_REPOSITORY }}" ]; then
             echo "ECR_REPOSITORY is not set. Exiting."
             exit 1
           fi
-
       - name: Set IMAGE_TAG to latest
-        run: echo "IMAGE_TAG=latest" >> $GITHUB_ENV
+        run: echo "IMAGE_TAG=latest" | tee -a $GITHUB_ENV
 
       - name: Build and tag Docker image
         run: |
           docker build -t ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest .
-
-      - name: Install Trivy
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y trivy
-
+      # Security Check - Container Vulnerability Scan
       - name: Run Trivy Image Scan
         run: |
-          trivy image --severity HIGH,CRITICAL ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest
-
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest \
+          image --severity HIGH,CRITICAL ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest
       - name: Push Docker image to ECR
         run: |
           docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest
-
   deploy_k8s:
     needs: build_and_push_docker_image
     runs-on: ubuntu-latest
@@ -115,29 +115,28 @@ jobs:
 
       - name: Get Last Commit SHA
         id: get_last_commit
-        run: echo "LAST_COMMIT_SHA=${{ github.sha }}" >> $GITHUB_ENV
+        run: echo "LAST_COMMIT_SHA=${{ github.sha }}" | tee -a $GITHUB_ENV
 
-      - name: Install jq (if not installed)
+      - name: Install jq
         run: |
-          if ! command -v jq &> /dev/null; then
-            sudo apt-get update && sudo apt-get install -y jq
-          fi
-
+          sudo apt-get update
+          sudo apt-get install -y jq
       - name: Install kubectl
         run: |
-          curl -LO "https://dl.k8s.io/release/stable.txt"
-          curl -LO "https://dl.k8s.io/release/$(cat stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/kubectl
-
+          curl -LO "https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x ./kubectl
+          sudo mv ./kubectl /usr/local/bin/kubectl
       - name: Check kubectl version
         run: kubectl version --client
 
       - name: Update Kubeconfig for EKS Cluster
         run: |
-          CLUSTER_NAME="eks-cluster-dev"
+          if [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            CLUSTER_NAME=eks-cluster-prod
+          else
+            CLUSTER_NAME=eks-cluster-dev
+          fi
           aws eks update-kubeconfig --name $CLUSTER_NAME --region ${{ secrets.AWS_REGION }}
-
       - name: Make update-k8s-yaml.sh executable
         run: chmod +x ./kubernetes/update-k8s-yaml.sh
 
@@ -145,8 +144,8 @@ jobs:
         run: ./kubernetes/update-k8s-yaml.sh 
 
       - name: Deploy to Kubernetes
-        run: kubectl apply -f ./kubernetes/deployment.yaml --validate=false
-
+        run: |
+          kubectl apply -f ./kubernetes/deployment.yaml
       - name: Create ImagePullSecret
         run: |
           kubectl get secret gab-app-secret || \
@@ -155,18 +154,22 @@ jobs:
           --docker-username=AWS \
           --docker-password=$(aws ecr get-login-password --region ${{ secrets.AWS_REGION }}) \
           --docker-email=${{ secrets.MY_AWS_EMAIL }}
-
-      - name: Deploy Kubernetes Service
-        run: kubectl apply -f ./kubernetes/service.yaml
-
+      - name: Deploy to Service Kubernetes
+        run: |
+          kubectl apply -f ./kubernetes/service.yaml
       - name: Get Kubernetes Pods
-        run: kubectl get pods -o wide
-
+        run: |
+          echo "Getting Kubernetes pods..."
+          kubectl get pods -o wide
       - name: Get Kubernetes Service
-        run: kubectl get svc
-
+        run: |
+          echo "Getting Kubernetes service..."
+          kubectl get svc
       - name: Describe Kubernetes Pods
-        run: kubectl describe pods
-
+        run: |
+          echo "Describing Kubernetes pods..."
+          kubectl describe pods
       - name: Get Kubernetes Nodes
-        run: kubectl get nodes -o wide
+        run: |
+          echo "Getting Kubernetes nodes..."
+          kubectl get nodes -o wide
