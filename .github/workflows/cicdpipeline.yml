@@ -28,7 +28,7 @@ jobs:
           python -m venv venv
           venv/bin/pip install -r requirements.txt
           venv/bin/pip install pytest flake8 bandit safety
-          pip install --upgrade jinja2
+          venv/bin/pip install --upgrade jinja2
 
       - name: Run Unit Tests
         run: venv/bin/python -m pytest
@@ -36,17 +36,11 @@ jobs:
       - name: Lint Test with Flake8
         run: venv/bin/python -m flake8 . --exclude=venv
 
-      # Security Check - Static Code Analysis  
       - name: Run Bandit Security Check
-        run: |
-          source venv/bin/activate
-          bandit -r . --exclude venv || true
-      
-      # Security Check - Dependency Vulnerability Scanning (ignore jinja vuln)
+        run: venv/bin/bandit -r . --exclude venv || true
+
       - name: Run Safety Check for Vulnerabilities
-        run: |
-          source venv/bin/activate
-          safety check --ignore=70612 
+        run: venv/bin/safety check --ignore=70612 
 
   build_and_push_docker_image:
     needs: build_and_test
@@ -77,9 +71,6 @@ jobs:
             echo "ENVIRONMENT=dev" >> $GITHUB_ENV
           fi
 
-      - name: Debug Environment Variables
-        run: echo "ECR_REPOSITORY=${{ env.ECR_REPOSITORY }}"
-      
       - name: Validate Environment Variables
         run: |
           if [ -z "${{ env.ECR_REPOSITORY }}" ]; then
@@ -94,11 +85,14 @@ jobs:
         run: |
           docker build -t ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest .
 
-      # Security Check - Container Vulnerability Scan
+      - name: Install Trivy
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y trivy
+
       - name: Run Trivy Image Scan
         run: |
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest \
-          image --severity HIGH,CRITICAL ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest
+          trivy image --severity HIGH,CRITICAL ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest
 
       - name: Push Docker image to ECR
         run: |
@@ -123,28 +117,25 @@ jobs:
         id: get_last_commit
         run: echo "LAST_COMMIT_SHA=${{ github.sha }}" >> $GITHUB_ENV
 
-      - name: Install jq
+      - name: Install jq (if not installed)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y jq
+          if ! command -v jq &> /dev/null; then
+            sudo apt-get update && sudo apt-get install -y jq
+          fi
 
       - name: Install kubectl
         run: |
-          curl -LO "https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x ./kubectl
-          sudo mv ./kubectl /usr/local/bin/kubectl
+          curl -LO "https://dl.k8s.io/release/stable.txt"
+          curl -LO "https://dl.k8s.io/release/$(cat stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
 
       - name: Check kubectl version
         run: kubectl version --client
 
       - name: Update Kubeconfig for EKS Cluster
         run: |
-          if [ "${{ github.ref }}" == "refs/heads/main" ]; then
-            echo "Skipping production cluster..."
-            exit 0
-          else
-            CLUSTER_NAME=eks-cluster-dev
-          fi
+          CLUSTER_NAME="eks-cluster-dev"
           aws eks update-kubeconfig --name $CLUSTER_NAME --region ${{ secrets.AWS_REGION }}
 
       - name: Make update-k8s-yaml.sh executable
@@ -152,9 +143,9 @@ jobs:
 
       - name: Update Kubernetes Deployment YAML
         run: ./kubernetes/update-k8s-yaml.sh 
+
       - name: Deploy to Kubernetes
-        run: |
-          kubectl apply -f ./kubernetes/deployment.yaml --validate=false
+        run: kubectl apply -f ./kubernetes/deployment.yaml --validate=false
 
       - name: Create ImagePullSecret
         run: |
@@ -165,25 +156,17 @@ jobs:
           --docker-password=$(aws ecr get-login-password --region ${{ secrets.AWS_REGION }}) \
           --docker-email=${{ secrets.MY_AWS_EMAIL }}
 
-      - name: Deploy to Service Kubernetes
+      - name: Deploy Kubernetes Service
         run: kubectl apply -f ./kubernetes/service.yaml
 
       - name: Get Kubernetes Pods
-        run: |
-          echo "Getting Kubernetes pods..."
-          kubectl get pods -o wide
+        run: kubectl get pods -o wide
 
       - name: Get Kubernetes Service
-        run: |
-          echo "Getting Kubernetes service..."
-          kubectl get svc
+        run: kubectl get svc
 
       - name: Describe Kubernetes Pods
-        run: |
-          echo "Describing Kubernetes pods..."
-          kubectl describe pods
+        run: kubectl describe pods
 
       - name: Get Kubernetes Nodes
-        run: |
-          echo "Getting Kubernetes nodes..."
-          kubectl get nodes -o wide
+        run: kubectl get nodes -o wide
