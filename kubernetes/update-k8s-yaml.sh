@@ -1,21 +1,49 @@
+
+# #!/bin/bash
+
+# set -e  # Exit immediately if a command exits with a non-zero status
+
+# # Constants
+# DEPLOYMENT_FILE="./kubernetes/deployment.yaml"
+# ECR_IMAGE="$AWS_ACCOUNT_ID.dkr.ecr.eu-west-1.amazonaws.com/gabapprepodev:latest"
+
+# # Check if the deployment file exists
+# if [[ ! -f "$DEPLOYMENT_FILE" ]]; then
+#     echo "Error: Deployment file $DEPLOYMENT_FILE does not exist."
+#     exit 1
+# fi
+
+# # Update the image in the deployment YAML file
+# sed -i.bak "s|image: \".*\"|image: \"$ECR_IMAGE\"|" "$DEPLOYMENT_FILE"
+
+# # Inform the user of the update
+# echo "Updated $DEPLOYMENT_FILE with image: $ECR_IMAGE"
+
+
 #!/bin/bash
 
 set -e  # Exit immediately if a command exits with a non-zero status
 
+# Constants
+DEPLOYMENT_FILE="./kubernetes/deployment.yaml"
+
 # Determine the environment based on the branch
 if [[ "$GITHUB_REF" == "refs/heads/main" ]]; then
-    CLUSTER_NAME="eks-cluster-prod"
-    echo "Deploying to production cluster..."
+    ECR_IMAGE="$AWS_ACCOUNT_ID.dkr.ecr.eu-west-1.amazonaws.com/gabapprepoprod:latest"
+    echo "Deploying to production environment..."
 else
-    CLUSTER_NAME="eks-cluster-dev"
-    echo "Deploying to development cluster..."
+    ECR_IMAGE="$AWS_ACCOUNT_ID.dkr.ecr.eu-west-1.amazonaws.com/gabapprepodev:latest"
+    echo "Deploying to development environment..."
 fi
 
-# Validate if the cluster exists before updating kubeconfig
-if aws eks describe-cluster --name "$CLUSTER_NAME" --region "$AWS_REGION" > /dev/null 2>&1; then
-    echo "Cluster $CLUSTER_NAME found. Updating kubeconfig..."
-    aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION"
-else
-    echo "Error: No cluster found with name $CLUSTER_NAME. Deployment aborted."
+# Check if the deployment file exists
+if [[ ! -f "$DEPLOYMENT_FILE" ]]; then
+    echo "Error: Deployment file $DEPLOYMENT_FILE does not exist."
     exit 1
 fi
+
+# Update the image in the deployment YAML file
+sed -i.bak "s|image: \".*\"|image: \"$ECR_IMAGE\"|" "$DEPLOYMENT_FILE"
+
+# Inform the user of the update
+echo "Updated $DEPLOYMENT_FILE with image: $ECR_IMAGE"
