@@ -143,7 +143,7 @@ jobs:
       - name: Update Kubeconfig for EKS Cluster
         run: |
           if [ "${{ github.ref }}" == "refs/heads/main" ]; then
-            CLUSTER_NAME=eks-cluster-prod
+           #CLUSTER_NAME=eks-cluster-prod
           else
             CLUSTER_NAME=eks-cluster-dev
           fi
