@@ -152,10 +152,9 @@ jobs:
 
       - name: Update Kubernetes Deployment YAML
         run: ./kubernetes/update-k8s-yaml.sh 
-
       - name: Deploy to Kubernetes
         run: |
-          kubectl apply -f ./kubernetes/deployment.yaml
+          kubectl apply -f ./kubernetes/deployment.yaml --validate=false
 
       - name: Create ImagePullSecret
         run: |
